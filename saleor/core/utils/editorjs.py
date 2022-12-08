@@ -1,6 +1,6 @@
 import re
 import warnings
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from django.utils.html import strip_tags
 from urllib3.util import parse_url
@@ -25,7 +25,7 @@ def clean_editor_js(definitions: Optional[Dict], *, to_string: bool = False):
     if not blocks or not isinstance(blocks, list):
         return "" if to_string else definitions
 
-    plain_text_list = []
+    plain_text_list: List[str] = []
 
     for index, block in enumerate(blocks):
         block_type = block["type"]
@@ -33,26 +33,69 @@ def clean_editor_js(definitions: Optional[Dict], *, to_string: bool = False):
         if not data or not isinstance(data, dict):
             continue
 
-        if block_type == "list":
-            for item_index, item in enumerate(block["data"]["items"]):
-                if not item:
-                    continue
-                new_text = clean_text_data(item)
-                if to_string:
-                    plain_text_list.append(strip_tags(new_text))
-                else:
-                    blocks[index]["data"]["items"][item_index] = new_text
+        params = [blocks, block, plain_text_list, to_string, index]
+        item_type_to_clean_func_map = {
+            "list": clean_list_item,
+            "image": clean_image_item,
+            "embed": clean_embed_item,
+        }
+        if clean_func := item_type_to_clean_func_map.get(block_type):
+            clean_func(*params)
         else:
-            text = block["data"].get("text")
-            if not text:
-                continue
-            new_text = clean_text_data(text)
-            if to_string:
-                plain_text_list.append(strip_tags(new_text))
-            else:
-                blocks[index]["data"]["text"] = new_text
+            clean_other_items(*params)
 
     return " ".join(plain_text_list) if to_string else definitions
+
+
+def clean_list_item(blocks, block, plain_text_list, to_string, index):
+    for item_index, item in enumerate(block["data"]["items"]):
+        if not item:
+            return
+        new_text = clean_text_data(item)
+        if to_string:
+            plain_text_list.append(strip_tags(new_text))
+        else:
+            blocks[index]["data"]["items"][item_index] = new_text
+
+
+def clean_image_item(blocks, block, plain_text_list, to_string, index):
+    file_url = block["data"].get("file", {}).get("url")
+    caption = block["data"].get("caption")
+    if file_url:
+        file_url = clean_text_data(file_url)
+        if to_string:
+            plain_text_list.append(strip_tags(file_url))
+        else:
+            blocks[index]["data"]["file"]["ulr"] = file_url
+    if caption:
+        caption = clean_text_data(caption)
+        if to_string:
+            plain_text_list.append(strip_tags(caption))
+        else:
+            blocks[index]["data"]["caption"] = caption
+
+
+def clean_embed_item(blocks, block, plain_text_list, to_string, index):
+    for field in ["source", "embed", "caption"]:
+        data = block["data"].get(field)
+        if not data:
+            return
+        data = clean_text_data(data)
+        if to_string:
+            plain_text_list.append(strip_tags(data))
+        else:
+            blocks[index]["data"][field] = data
+
+
+def clean_other_items(blocks, block, plain_text_list, to_string, index):
+    text = block["data"].get("text")
+    if not text:
+        return
+    new_text = clean_text_data(text)
+    if to_string:
+        plain_text_list.append(strip_tags(new_text))
+    else:
+        blocks[index]["data"]["text"] = new_text
 
 
 def clean_text_data(text: str) -> str:
